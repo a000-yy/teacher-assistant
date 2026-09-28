@@ -1,6 +1,5 @@
 from fastapi import APIRouter,Depends,HTTPException,File,Form,UploadFile
 from fastapi.params import Depends
-from multipart import file_path
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from app.db.database import get_db
@@ -9,6 +8,9 @@ from app.models.user import User
 from app.schemas.document import DocumentOut, DocumentCreate
 import os #操作系统接口，这里用于处理路径（如 os.path.join、os.makedirs 创建目录、os.remove 删除文件）
 import shutil #高层文件操作，用于保存上传的文件
+from app.services.doc_parser import extract_text
+from app.services.text_splitter import split_text
+
 
 router = APIRouter(prefix="/documents",tags=["文档"])
 
@@ -16,7 +18,7 @@ UPLOAD_DIR = "data/uploads"#定义文件上传后存放的相对路径
 os.makedirs(UPLOAD_DIR,exist_ok=True) # 创建目录，若已存在也不报错
 
 #上传文件
-@router.post("/upload",response_model=DocumentOut)
+@router.post("/upload")
 def upload_document(
         owner_id:int=Form(...),
         title:str=Form(...),
@@ -37,7 +39,20 @@ def upload_document(
     db.add(doc)
     db.commit()
     db.refresh(doc)
-    return doc
+    #3.解析+切分（pdf）
+    chunks=[]
+    if file.filename.lower().endswith(".pdf"):
+        text=extract_text(file_path)
+        chunks=split_text(text)
+
+    #4.返回结果
+    return {
+        "document_id":doc.document_id,
+        "title":doc.title,
+        "chunks_count":len(chunks),
+        "chunks_preview":chunks[:2]
+    }
+
 
 
  #创建文档
@@ -72,3 +87,4 @@ def get_document(document_id:int,db:Session=Depends(get_db)):
     if not doc:
         raise HTTPException(status_code=404, detail="文档不存在")
     return doc
+
